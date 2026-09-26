@@ -35,6 +35,24 @@ quantum,q1000k-ubi)
 	ucidef_set_led_netdev "lan1-yellow" "lan1" "yellow:lan" "lan1" "link_10 link_100"
 	ucidef_set_led_netdev "lan1-green" "lan1" "green:lan" "lan1" "link_1000 tx rx"
 	;;
+h3c,hm2004-du)
+	# 网口灯不在这里配：四个口是 PHY 硬件直驱（mt7530-0:0f = EN8811H 2.5G，
+	# 0a/0b/0c = 内部 GSW PHY2/3/4），自己跟 link/activity 闪。在这里或 LuCI
+	# 挂任何 trigger 会把 PHY LED 踢出硬件模式，结果就是"配一个、三个常亮"。
+	#
+	# 面板灯全部 active-low（实测）。17/18/19/15/34 已验证点亮；GPIO16（电源红）
+	# 和 GPIO21（下联光）点不亮，DTS 里没有对应节点。pon0-* 三颗触发器在 DTS。
+	#
+	# wlan 和 usbport 必须挂在这里：这两个 trigger 的注册晚于 gpio-leds 探测，
+	# 写在 DTS 的 linux,default-trigger 会被静默丢弃。LuCI 里的 mt76-phy0/phy1
+	# 是虚拟 LED，没有实体灯——实体无线灯是 green:wlan。
+	# TODO(verify): GPIO12（LAN 汇总灯）和 GPIO20（上网灯）未实测，
+	# 不对就删掉 green:lan 这行（20 只有 DTS trigger，无 uci 项）。
+	ucidef_set_led_netdev "lan" "lan" "green:lan" "br-lan" "link tx rx"
+	ucidef_set_led_wlan "wlan" "wlan" "green:wlan" "phy0tpt"
+	# "1-1" 用 `ls /sys/bus/usb/devices` 核对。
+	ucidef_set_led_usbport "usb" "usb" "green:usb" "1-1"
+	;;
 esac
 
 board_config_flush

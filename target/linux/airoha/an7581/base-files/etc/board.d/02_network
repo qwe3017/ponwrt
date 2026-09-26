@@ -6,6 +6,19 @@
 . /lib/functions/uci-defaults.sh
 . /lib/functions/system.sh
 
+#
+# H3C HM2004-DU MAC handling. The base MAC lives in the factory UBI volume
+# at offset 0x140005 as six plain bytes; the device tree reads it through a
+# mac-base cell and derives eth0 (+1), pon0 (+2) and both radios (+4/+5)
+# directly in the kernel, so no MAC parsing happens in this script.
+#
+# Stock firmware only ever leaves the locally administered placeholder
+# 02:00:00:XX:00:00 in that slot (the real address is inside the gzipped
+# ctromfile at 0x80000), so the volume must be seeded once with the real
+# bytes - see factory-h3c-hm2004du-seed.bin. Until then the guard below
+# keeps the kernel defaults instead of handing out the placeholder.
+#
+
 an7581_setup_interfaces()
 {
 	local board="$1"
@@ -62,6 +75,32 @@ an7581_setup_interfaces()
 	znxt,zn515xg-d)
 		# Panel numbering starts at the 2.5G port and continues through lan4.
 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "pon0"
+		;;
+	h3c,hm2004-du)
+		# One EN8811H 2.5GE port plus three GSW ports; PON is the uplink.
+		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "pon0"
+
+		# lan1 (gdm4) carries the label MAC straight from the factory
+		# mac-base cell (0x140005); the kernel has already applied it by
+		# the time board.d runs. Read it back from sysfs - no binary
+		# parsing needed - and hand it to the bridge, because netifd
+		# only pushes an interface macaddr down to the bridge ports,
+		# br-lan itself would keep a random address otherwise.
+		#
+		# A locally administered first byte (bit 1 set: the stock
+		# 02:00:00:XX:00:00 placeholder, or a random default) means the
+		# factory volume is not seeded yet; leave everything alone so
+		# the kernel defaults stand.
+		base_mac=$(cat /sys/class/net/lan1/address 2>/dev/null)
+		first=${base_mac%%:*}
+		if [ -n "$base_mac" ] && [ $((0x$first & 0x02)) -eq 0 ]; then
+			ucidef_set_label_macaddr "$base_mac"
+			ucidef_set_interface_macaddr "lan" "$base_mac"
+			ucidef_set_network_device_mac "br-lan" "$base_mac"
+			echo "h3c-mac: label $base_mac (factory 0x140005 via lan1)"
+		else
+			echo "h3c-mac: factory 0x140005 not seeded, keeping kernel defaults"
+		fi
 		;;
 	nokia,valyrian)
 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 10g" "wan"
