@@ -65,13 +65,6 @@
 
 	leds {
 		compatible = "gpio-leds";
-		/*
-		 * All lamps are active-low (verified on hardware). GPIO17/18/19/
-		 * 15/34 were each confirmed to light; GPIO12 and GPIO20 are still
-		 * unconfirmed (stock env ether_gpio=0c / internet_gpio=14).
-		 * GPIO16 (red power) and GPIO21 (downlink) light nothing on this
-		 * board and are deliberately not declared.
-		 */
 		led_power: led-power {
 			color = <LED_COLOR_ID_GREEN>;
 			function = LED_FUNCTION_POWER;
@@ -136,26 +129,6 @@
 	};
 
 	/*
-	 * Reserved node for the FTTR downstream optical port (下行光口).
-	 * Stock DTB: compatible "h3c,fmcs" plus spi-controller = <11>,
-	 * fpga-spi-int-gpio = <23>, interrupts = <0 26 1> (GIC_SPI 26,
-	 * level-high) and fpga-load-{rst,cfg-done,flag,clk,do}-gpio = <0>:
-	 * an FPGA whose bitstream is bit-banged over GPIO and which then
-	 * speaks SPI. Stock env fttr_olt_sel=4 - the master runs in OLT mode
-	 * towards the slave gateways (mtd5/mtd6/mtd7 hold the slave
-	 * kernel/rootfs/tclinux images it serves over this port).
-	 *
-	 * Nothing else can be reserved for it: AN7581 wires only gdm1 (CPU),
-	 * gdm2 (PON) and gdm4 (2.5GE) - there is no gdm3, so the downlink can
-	 * never become an airoha,eth-mac netdev - and next to pon_pcs /
-	 * eth_pcs / usb_pcs the only PCS block left (pcs@1fa04000) is
-	 * "airoha,an7581-pcs-pcie", i.e. PCIe. A driver must talk SPI with
-	 * GPIO23 as IRQ. The stock mdio-bus also lists 0x0d/0x0e beside the
-	 * EN8811H at 0x0f - most likely this FPGA's port PHYs, left
-	 * undeclared so they do not probe as phantom PHYs. No lamp either:
-	 * GPIO21, assumed to be the downlink lamp, does not light.
-	 *
-	 * Skeleton once a binding exists:
 	 *   fmcs {
 	 *       compatible = "h3c,fmcs";
 	 *       spi-controller = <11>;
@@ -279,11 +252,6 @@
 							reg = <0x00000000 0x00000008>;
 						};
 
-						/* Base MAC: label plus all per-unit derivations
-						 * via the mac-base read_post_process (index added
-						 * to the last byte). The cell only yields usable
-						 * addresses once the volume is seeded with the
-						 * real bytes; an erased slot reads as ff:ff:... */
 						base_mac: base-mac@10 {
 							compatible = "mac-base";
 							reg = <0x00000010 0x00000006>;
@@ -313,25 +281,6 @@
 	};
 };
 
-/*
- * All MACs derive from the six raw bytes at factory offset 0x10 (compact
- * 1 MiB layout) through the mac-base cell above - the same
- * read_post_process scheme the Nokia XG-040G boards use. The stock
- * reservearea keeps only the locally administered placeholder
- * 02:00:00:XX:00:00 in its own slot (the real address lives inside the gzip
- * ctromfile at 0x80000 of the 0x240000-byte dump), so the volume must be
- * seeded once before these cells mean anything:
- *
- *   factory-h3c-hm2004du-seed-1mib.bin = compact 1 MiB image carrying the
- *   real label MAC, SN, Wi-Fi EEPROM and PON calibration, flashed with
- *   ubiupdatevol.
- *
- * Derivations (matching the h3c-hm2004du-factory editor): lan1/gdm4 = label,
- * gdm1/eth0 = label+1, pon0/gdm2 = label+2, 5G radio = label+4, 2.4G radio
- * = label+5. The lan bridge keeps its address from 02_network, which reads
- * the label back out of lan1 in sysfs (netifd does not push a macaddr onto
- * the bridge device itself).
- */
 &ubi_env {
 	nvmem-layout {
 		compatible = "u-boot,env-redundant-bool-layout";
@@ -347,10 +296,6 @@
 &i2c0 {
 	status = "okay";
 
-	/*
-	 * UX3326 BOSA assembly driven by the EN7572-compatible controller;
-	 * reservearea calibration header names the chip explicitly.
-	 */
 	en7572: optical-front-end@50 {
 		compatible = "airoha,en7572";
 		reg = <0x50>;
@@ -579,13 +524,6 @@
 			mediatek,eeprom-merge-otp;
 			airoha,npu = <&npu>;
 			airoha,eth = <&eth>;
-
-			/* The EEPROM only ships the Ralink placeholder
-			 * 00:0c:43:26:60:00, so both bands take their address
-			 * from the factory mac-base cell, with the same
-			 * per-band pattern as an7581-nokia-valyrian. Verify the
-			 * band order on the running unit ("iw phyN bands") and
-			 * swap the two indices if 2.4G ends up on band 0. */
 			band@0 {
 				reg = <0>;
 				nvmem-cells = <&base_mac 5>;
