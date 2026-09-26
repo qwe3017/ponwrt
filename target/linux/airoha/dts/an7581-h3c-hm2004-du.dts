@@ -1,21 +1,6 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 /dts-v1/;
 
-/*
- * H3C HM2004-DU - FTTR master gateway (China Unicom variant).
- *
- * Airoha AN7581CT, quad A53 @ 900 MHz, 512 MiB DRAM (stock env
- * dram_limit=512M - the stock DTB's 8 GiB node is bogus), 256 MiB
- * SPI-NAND. XG-PON / 10G-EPON upstream through the internal xPON MAC
- * with an EN7572-class BOSA (UX3326; calibration at 0x1c0400).
- *
- * Downstream: 1x 2.5GE (EN8811H, external MDIO) + 3x GE (internal GSW
- * PHYs) + USB 2.0 + MT7916 (MT7916AN + MT7976DN, DBDC 2x2) + POTS
- * (SLIC, no driver ported). The FTTR downlink towards the slave
- * gateways is an H3C FMCS FPGA - see the fmcs node.
- */
-
-/* Firmware reserves the first 2 MiB of DRAM. */
 /memreserve/ 0x80000000 0x200000;
 
 #include <dt-bindings/gpio/gpio.h>
@@ -65,6 +50,7 @@
 
 	leds {
 		compatible = "gpio-leds";
+		
 		led_power: led-power {
 			color = <LED_COLOR_ID_GREEN>;
 			function = LED_FUNCTION_POWER;
@@ -129,6 +115,7 @@
 	};
 
 	/*
+	 * Skeleton once a binding exists:
 	 *   fmcs {
 	 *       compatible = "h3c,fmcs";
 	 *       spi-controller = <11>;
@@ -234,14 +221,20 @@
 					 * 1 MiB layout defined by the h3c-hm2004du-factory
 					 * editor (github.com/qwe3017/h3c-hm2004du-factory):
 					 *   0x0000  magic "H3C-1MiB" (8 ASCII bytes)
-					 *   0x0010  label MAC, six raw bytes
-					 *   0x0020  eth0 MAC (label+1, informational copy)
-					 *   0x0030  pon0 MAC (label+2, informational copy)
-					 *   0x0040  5G MAC (label+4, informational copy)
-					 *   0x0050  2.4G MAC (label+5, informational copy)
+					 *   0x0010  label / lan1 MAC, six raw bytes
+					 *   0x0020  eth0 MAC, six raw bytes
+					 *   0x0030  pon0 MAC, six raw bytes
+					 *   0x0040  5G radio MAC, six raw bytes
+					 *   0x0050  2.4G radio MAC, six raw bytes
 					 *   0x0060  Device SN, 12-byte ASCII
 					 *   0x1000  Wi-Fi EEPROM, 0x1000 (MT7916 DBDC)
 					 *   0x2000  PON calibration, 0x200 (EN7572)
+					 *
+					 * Every MAC the board needs is read out of this
+					 * volume and nothing else: the four per-interface
+					 * slots are consumed verbatim, and the three GSW
+					 * LAN ports - which the compact format has no slot
+					 * for - are derived from 0x10 by the mac-base cell.
 					 */
 					h3c_hm2004du_layout: nvmem-layout {
 						compatible = "fixed-layout";
@@ -252,13 +245,30 @@
 							reg = <0x00000000 0x00000008>;
 						};
 
-						base_mac: base-mac@10 {
-							compatible = "mac-base";
-							reg = <0x00000010 0x00000006>;
-							#nvmem-cell-cells = <1>;
-						};
+					base_mac: base-mac@10 {
+						compatible = "mac-base";
+						reg = <0x00000010 0x00000006>;
+						#nvmem-cell-cells = <1>;
+					};
 
-						pon_serial: pon-serial@60 {
+					/* Per-interface slots, consumed verbatim. */
+					mac_eth0: mac-eth0@20 {
+						reg = <0x00000020 0x00000006>;
+					};
+
+					mac_pon0: mac-pon0@30 {
+						reg = <0x00000030 0x00000006>;
+					};
+
+					mac_5g: mac-5g@40 {
+						reg = <0x00000040 0x00000006>;
+					};
+
+					mac_24g: mac-24g@50 {
+						reg = <0x00000050 0x00000006>;
+					};
+
+					pon_serial: pon-serial@60 {
 							reg = <0x00000060 0x0000000c>;
 						};
 
@@ -281,6 +291,7 @@
 	};
 };
 
+
 &ubi_env {
 	nvmem-layout {
 		compatible = "u-boot,env-redundant-bool-layout";
@@ -296,6 +307,10 @@
 &i2c0 {
 	status = "okay";
 
+	/*
+	 * UX3326 BOSA assembly driven by the EN7572-compatible controller;
+	 * reservearea calibration header names the chip explicitly.
+	 */
 	en7572: optical-front-end@50 {
 		compatible = "airoha,en7572";
 		reg = <0x50>;
@@ -326,14 +341,14 @@
 &eth {
 	status = "okay";
 
-	/* eth0 is the internal FE/GMAC netdev; it takes label+1 from the
-	 * factory mac-base cell. */
+	/* eth0 is the internal FE/GMAC netdev and the DSA master of the
+	 * integrated switch; its address is declared on gdm1 below. */
 };
 
 &gdm1 {
-	/* eth0's GMAC port: label+1, one above the LAN side. */
+	/* eth0: the 0x20 slot of the factory volume. */
 	nvmem-cell-names = "mac-address";
-	nvmem-cells = <&base_mac 1>;
+	nvmem-cells = <&mac_eth0>;
 	status = "okay";
 };
 
@@ -387,12 +402,11 @@
 	status = "okay";
 };
 
-/*
- * Panel LAN2, LAN3, LAN4 map to the internal GSW PHYs 2, 3, and 4
- * (panel 2.5GE is LAN1 via EN8811H above).
- */
+
 &gsw_port2 {
 	label = "lan2";
+	nvmem-cell-names = "mac-address";
+	nvmem-cells = <&base_mac 6>;
 	status = "okay";
 };
 
@@ -413,6 +427,8 @@
 
 &gsw_port3 {
 	label = "lan3";
+	nvmem-cell-names = "mac-address";
+	nvmem-cells = <&base_mac 7>;
 	status = "okay";
 };
 
@@ -433,6 +449,8 @@
 
 &gsw_port4 {
 	label = "lan4";
+	nvmem-cell-names = "mac-address";
+	nvmem-cells = <&base_mac 8>;
 	status = "okay";
 };
 
@@ -467,10 +485,10 @@
 
 &gdm2 {
 	/* XG-PON/10G-EPON upstream; GPON mode is selected by ponctl.
-	 * label+2 from the factory mac-base cell, so the two L2 domains
-	 * do not collide. */
+	 * The 0x30 slot of the factory volume, so the two L2 domains
+	 * cannot collide with the LAN side. */
 	nvmem-cell-names = "mac-address";
-	nvmem-cells = <&base_mac 2>;
+	nvmem-cells = <&mac_pon0>;
 	airoha,pon-data-path;
 	status = "okay";
 };
@@ -526,13 +544,13 @@
 			airoha,eth = <&eth>;
 			band@0 {
 				reg = <0>;
-				nvmem-cells = <&base_mac 5>;
+				nvmem-cells = <&mac_24g>;
 				nvmem-cell-names = "mac-address";
 			};
 
 			band@1 {
 				reg = <1>;
-				nvmem-cells = <&base_mac 4>;
+				nvmem-cells = <&mac_5g>;
 				nvmem-cell-names = "mac-address";
 			};
 		};
